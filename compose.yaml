@@ -1,0 +1,67 @@
+name: moth-watcher-runner
+
+services:
+  workspace-init:
+    image: ubuntu@sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517
+    user: "0:0"
+    command:
+      - /bin/sh
+      - -euc
+      - |
+        install -d -o 1000 -g 1000 -m 0755 /runner/_work
+        chown -R 1000:1000 /runner/_work
+        chmod 0755 /runner/_work
+    volumes:
+      - runner-work:/runner/_work
+    restart: "no"
+
+  docker-daemon:
+    image: docker@sha256:8a213afdd096a44dff403aaf8eb58b7a96a63113f18a4b094b98b7d0ed7d948b
+    privileged: true
+    command: ["--tls=false"]
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    cpus: 4
+    mem_limit: 8g
+    pids_limit: 512
+    volumes:
+      - docker-data:/home/rootless/.local/share/docker
+      - runner-work:/runner/_work
+      - type: bind
+        source: ${CODEX_AUTH_DIR:?Set CODEX_AUTH_DIR to the dedicated Codex home}
+        target: /codex-auth-host
+    healthcheck:
+      test: ["CMD-SHELL", "DOCKER_HOST=tcp://127.0.0.1:2375 docker info >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  actions-runner:
+    build:
+      context: .
+      dockerfile: github-runner/Dockerfile
+    depends_on:
+      workspace-init:
+        condition: service_completed_successfully
+      docker-daemon:
+        condition: service_healthy
+    environment:
+      DOCKER_HOST: tcp://docker-daemon:2375
+      DOCKER_BUILDKIT: "1"
+      RUNNER_URL: https://github.com/cre-chan/workflow
+      RUNNER_NAME: workflow-codex-docker-1
+      RUNNER_LABELS: moth-watcher-codex
+      RUNNER_MANUALLY_TRAP_SIG: "1"
+      MOTH_WATCHER_RUNNER_HOME: /opt/moth-watcher-runner
+      CODEX_AUTOMATION_HOME: /codex-auth-host
+    volumes:
+      - runner-state:/runner
+      - runner-work:/runner/_work
+    stop_grace_period: 1m
+    restart: unless-stopped
+
+volumes:
+  docker-data:
+  runner-state:
+  runner-work:
