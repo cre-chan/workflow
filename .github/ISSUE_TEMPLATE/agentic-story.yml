@@ -1,0 +1,195 @@
+# Adapted from Microsoft's Agentic Story template:
+# https://github.com/microsoft/agentic-agile-template/blob/main/.github/ISSUE_TEMPLATE/agentic-story.md
+
+name: Agentic Story
+description: AIエージェントへ実装作業を依頼するための構造化されたIssue
+title: "[Agentic Story]: "
+labels: []
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        このフォームには、AIエージェントが自律的に実装・検証できるだけの情報を記載してください。
+        不明な項目は推測で埋めず、未確定であることと確認方法を明記してください。
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: 概要
+      description: 実現したい変更を簡潔に説明してください。
+      placeholder: 何を、なぜ変更するのかを2〜3文で記載してください。
+    validations:
+      required: true
+
+  - type: textarea
+    id: originating_prompt
+    attributes:
+      label: 元の指示・プロンプト
+      description: このIssueの起点となった人間の指示を、可能な限りそのまま記載してください。
+      placeholder: |
+        例:
+        ユーザーが〇〇できるようにしてください。
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: 背景・目的
+      description: 解決したい問題、利用者への価値、現在の挙動を説明してください。
+      placeholder: |
+        - 現在の問題:
+        - 期待する価値:
+        - 関連する仕様やIssue:
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: 対象範囲
+      description: このIssueで実装・変更する範囲を具体的に記載してください。
+      placeholder: |
+        - 対象機能:
+        - 対象コンポーネント:
+        - 対象ユーザー:
+    validations:
+      required: true
+
+  - type: textarea
+    id: files
+    attributes:
+      label: 作成・変更するファイル
+      description: 分かる範囲で対象ファイルと変更内容を記載してください。
+      placeholder: |
+        - `path/to/file.ext` — 変更内容
+        - `path/to/new-file.ext` — 作成目的
+    validations:
+      required: false
+
+  - type: textarea
+    id: interfaces
+    attributes:
+      label: 実装するインターフェース
+      description: API、CLI、画面、イベント、型など、追加・変更する公開インターフェースを記載してください。
+      placeholder: |
+        - 入力:
+        - 出力:
+        - エラー時の挙動:
+        - 互換性:
+    validations:
+      required: false
+
+  - type: textarea
+    id: invariants
+    attributes:
+      label: 維持すべき仕様・不変条件
+      description: 変更後も守る必要がある既存仕様、互換性、セキュリティ要件を記載してください。
+      placeholder: |
+        - 既存の〇〇の挙動を維持する
+        - 公開APIとの後方互換性を維持する
+    validations:
+      required: false
+
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: 受入条件
+      description: 実装の合否を客観的に判定できる条件をチェックリスト形式で記載してください。
+      placeholder: |
+        - [ ] 条件1
+        - [ ] 条件2
+        - [ ] 条件3
+    validations:
+      required: true
+
+  - type: textarea
+    id: negative_constraints
+    attributes:
+      label: 対象外・禁止事項
+      description: このIssueに含めない変更や、AIが行ってはいけない操作を記載してください。
+      placeholder: |
+        - 〇〇は変更しない
+        - △△のリファクタリングは含めない
+        - 既存データを破壊しない
+    validations:
+      required: false
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: 依存Issue・ブロッカー
+      description: 先に完了すべきIssue、関連PR、外部依存、未確定事項を記載してください。
+      placeholder: |
+        - Depends on #123
+        - Blocked by #456
+        - なし
+    validations:
+      required: false
+
+  - type: textarea
+    id: file_ownership
+    attributes:
+      label: ファイル所有権・並行作業
+      description: 複数のAIや開発者が並行作業する場合、担当ファイルと競合回避ルールを記載してください。
+      placeholder: |
+        - `path/to/file.ext` — このIssueが担当
+        - `path/to/other.ext` — 別Issueが担当するため変更しない
+    validations:
+      required: false
+
+  - type: textarea
+    id: tests
+    attributes:
+      label: テスト手順・実行コマンド
+      description: AIが実行すべき自動テスト、静的解析、手動確認と期待結果を記載してください。
+      placeholder: |
+        - `npm test`
+        - `npm run lint`
+        - 手動確認: 〇〇すると△△が表示される
+    validations:
+      required: true
+
+  - type: textarea
+    id: completion_conditions
+    attributes:
+      label: 完了条件
+      description: コードとテスト以外も含め、Issueを完了と判断するために必要な成果物を記載してください。
+      placeholder: |
+        - 実装とテストが完了している
+        - 必要なドキュメントが更新されている
+        - PRに変更内容と検証結果が記載されている
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional_instructions
+    attributes:
+      label: AIへの追加指示
+      description: 使用するツール、判断に迷った場合の対応、レビュー時の注意点などを記載してください。
+      placeholder: |
+        例:
+        - 不明点は実装前に質問する
+        - 既存の設計パターンを優先する
+        - 破壊的な操作は行わない
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: completion_confirmation
+    attributes:
+      label: 完了確認
+      description: Issueを完了する前に、すべて確認してください。
+      options:
+        - label: すべての受入条件を満たしたことを確認します。
+          required: true
+        - label: 指定されたテストを実行し、結果を記録します。
+          required: true
+        - label: Issueの目的と無関係な変更を含めません。
+          required: true
+        - label: PRに変更内容と検証結果を記載します。
+          required: true
+    validations:
+      required: true
