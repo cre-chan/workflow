@@ -26,7 +26,7 @@ fake_bin="$scratch/bin"
 mkdir "$fake_bin"
 cat >"$fake_bin/gh" <<EOF
 #!/usr/bin/env bash
-printf '%s\n' '$base'
+printf '%s\n' "\${FAKE_CURRENT_BASE:-$base}"
 EOF
 chmod +x "$fake_bin/gh"
 
@@ -34,6 +34,13 @@ chmod +x "$fake_bin/gh"
 [[ $(<"$scratch/example.txt") == after ]]
 
 git -C "$scratch" reset --hard -q HEAD
+stale_base=0000000000000000000000000000000000000000
+if (cd "$scratch" && PATH="$fake_bin:$PATH" GITHUB_REPOSITORY=owner/repo EXPECTED_BASE_SHA="$base" FAKE_CURRENT_BASE="$stale_base" bash "$validator" result); then
+  echo "Stale patch was accepted" >&2
+  exit 1
+fi
+[[ $(<"$scratch/example.txt") == before ]]
+
 printf 'diff --git a/.github/workflows/evil.yml b/.github/workflows/evil.yml\nnew file mode 100644\nindex 0000000..8b13789\n--- /dev/null\n+++ b/.github/workflows/evil.yml\n@@ -0,0 +1 @@\n+bad\n' >"$scratch/result/codex.patch"
 if (cd "$scratch" && PATH="$fake_bin:$PATH" GITHUB_REPOSITORY=owner/repo EXPECTED_BASE_SHA="$base" bash "$validator" result); then
   echo "Protected path was accepted" >&2
