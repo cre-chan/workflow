@@ -135,6 +135,7 @@ jobs:
         with:
           name: codex-result-${{ github.event.issue.number }}
           path: .codex-result/
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 1
 
