@@ -23,6 +23,35 @@ rejected before any branch is created.
 
 The workflow never merges a PR or marks it ready for review.
 
+## Workflow and runner files
+
+The project is split between GitHub-hosted orchestration and a local self-hosted
+runner. GitHub Actions validates requests and publishes results, while the local
+runner executes Codex in an isolated worker container.
+
+### GitHub Actions
+
+- `.github/workflows/codex-agent-ready.yml` defines the complete Issue-to-Draft-PR
+  workflow. Its `implement` job targets the self-hosted local runner; the other
+  jobs run on GitHub-hosted runners.
+- `.github/scripts/validate-and-apply-patch.sh` is called by the workflow's
+  `publish` job to validate the local runner's result artifact before applying
+  it and creating a Draft PR.
+
+### Local runner
+
+- `compose.yaml` defines the local Actions runner, its Docker daemon, persistent
+  volumes, and workspace initialization service.
+- `.env.example` documents the local `CODEX_AUTH_DIR` setting used by Compose.
+- `github-runner/Dockerfile` builds the self-hosted GitHub Actions runner image.
+- `github-runner/entrypoint.sh` registers or starts that runner.
+- `run-codex-container.sh` builds and launches an isolated Codex worker for the
+  workflow's `implement` job and collects its result artifact.
+- `Dockerfile` and `Dockerfile.dockerignore` define the isolated Codex worker
+  image and its build context.
+- `container-entrypoint.sh` runs Codex inside the worker, runs the repository
+  validation, and writes the files under `.codex-result/`.
+
 ## Local validation
 
 ```bash
