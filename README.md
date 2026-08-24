@@ -25,6 +25,10 @@ The workflow never merges a PR or marks it ready for review.
 
 ## Workflow and runner files
 
+The project is split between GitHub-hosted orchestration and a local self-hosted
+runner. GitHub Actions validates requests and publishes results, while the local
+runner executes Codex in an isolated worker container.
+
 ### GitHub Actions
 
 - `.github/workflows/codex-agent-ready.yml` defines the complete Issue-to-Draft-PR
