@@ -1,6 +1,6 @@
 ---
 name: moth-watcher-runner
-description: Set up and verify the Dockerized self-hosted Codex runner and repository-scoped GitHub App used by cre-chan/workflow Issue-to-Draft-PR automation. Use for installing, registering, starting, updating, or troubleshooting this runner; do not use for ordinary application development.
+description: Set up and verify the multi-repository Dockerized Codex runners and existing repository-scoped GitHub App used by cre-chan Issue-to-Draft-PR automation. Use for adding, updating, removing, or troubleshooting monitored repositories.
 ---
 
 # Moth Watcher Runner
@@ -23,7 +23,8 @@ never be copied here.
 
 ## Configure the GitHub App
 
-Create a GitHub App named `moth-watcher-codex` with only these repository
+Reuse the existing GitHub App named `workflow-codex`; never create another App.
+Confirm that it has only these repository
 permissions:
 
 - Metadata: read
@@ -31,8 +32,7 @@ permissions:
 - Issues: read and write
 - Pull requests: read and write
 
-Install it only on the explicitly approved repositories, initially
-`cre-chan/workflow`. Store its App ID in the repository
+Install it only on explicitly approved `cre-chan` repositories. Store its App ID in each repository
 Actions variable `CODEX_APP_ID` and its private key in the repository Actions
 secret `CODEX_APP_PRIVATE_KEY`. Do not display or download an existing private key
 unless the user explicitly authorizes credential handling.
@@ -63,7 +63,18 @@ recommend a managed service account with workload identity.
 
 ## Register and run the Dockerized self-hosted runner
 
-Use `compose.yaml`. It starts an Actions runner container and a separate rootless
+For multiple repositories, use `manage-repositories.sh add`, `deploy`,
+`update`, `remove`, and `status` exactly as documented in README. Before `add`,
+pause for the user to approve the `workflow-codex` installation in the browser.
+Require `CODEX_APP_PRIVATE_KEY_FILE` to name the additional private-key file and
+never read it into a shell argument or display it. Registration and removal
+tokens must be piped to `runner-manager`; never retain them in configuration.
+After configuration changes, recreate the manager and verify every repository
+reports `running`. Repeating an operation must not create another commit or
+runner registration.
+
+Use `compose.yaml`. It starts one manager container with an Actions runner process
+per configured repository and a separate rootless
 Docker daemon used only for disposable Codex workers. It never mounts the host
 Docker socket. The daemon sidecar is privileged inside Docker Desktop's Linux VM;
 do not assume the same boundary is sufficient on a native Linux host.
@@ -93,28 +104,28 @@ directory.
 Copy `.env.example` to `.env` and set `CODEX_AUTH_DIR` to the absolute dedicated
 Codex home. Never place a token or private key in `.env`.
 
-In `cre-chan/workflow`, open **Settings > Actions > Runners > New self-hosted
-runner** and obtain the short-lived registration token. Register once with a
-throwaway container so the token is not retained in the long-running container:
+For every configured repository, request a short-lived registration token and
+pipe it directly into a throwaway manager invocation. Do not assign it to a
+shell variable or retain it in the long-running container:
 
 ```bash
-RUNNER_TOKEN='<short-lived token>' \
-  docker compose run --rm --no-deps \
-  -e RUNNER_TOKEN="$RUNNER_TOKEN" actions-runner register
+gh api --method POST repos/cre-chan/REPOSITORY/actions/runners/registration-token \
+  --jq .token | docker compose run --rm --no-deps -T runner-manager \
+  register cre-chan/REPOSITORY
 ```
 
 Then start and inspect the services:
 
 ```bash
 docker compose run --rm workspace-init
-docker compose up -d actions-runner
+docker compose up -d runner-manager
 docker compose ps
-docker compose logs --tail=100 actions-runner
+docker compose logs --tail=100 runner-manager
 ```
 
 `workspace-init` initializes the named `runner-work` volume as UID/GID
 `1000:1000` with mode `0755`. Compose also runs it automatically before
-`actions-runner` starts. It changes only that named volume and preserves the
+`runner-manager` starts. It changes only that named volume and preserves each
 runner registration in `runner-state`.
 
 Wait until the runner log contains `Listening for Jobs` before rerunning or
@@ -122,10 +133,11 @@ opening an eligible Issue. A forced recreation can leave the previous GitHub
 session active temporarily; do not dispatch a job while the replacement runner
 reports `A session for this runner already exists`.
 
-The expected runner is `workflow-codex-docker-1` with `self-hosted`, `Linux`,
-`ARM64`, and `moth-watcher-codex` labels. One instance accepts one job at a time.
-Do not scale the service by cloning its registration volume; each parallel runner
-needs a unique GitHub registration, name, and state volume.
+Each expected runner is named `workflow-codex-cre-chan-REPOSITORY` and has
+`self-hosted`, platform, architecture, and `moth-watcher-codex` labels. Each has
+unique state and work paths. `shared-concurrency.sh` holds a slot in the shared
+lock volume around the complete Codex worker invocation; the configured limit
+defaults to one and applies across all repositories.
 
 ## Validate before enabling
 
@@ -143,9 +155,9 @@ Also validate the Dockerized runner path:
 ```bash
 docker compose config --quiet
 docker compose run --rm workspace-init
-docker compose run --rm --no-deps --entrypoint /bin/bash actions-runner -lc \
-  'test -w /runner/_work && mkdir -p /runner/_work/_tool'
-docker compose exec actions-runner docker info
+docker compose run --rm --no-deps --entrypoint /bin/bash runner-manager -lc \
+  'test -w /runner-work && mkdir -p /runner-work/_tool'
+docker compose exec runner-manager docker info
 ```
 
 Do not invoke `run-codex-container.sh` until authentication is configured and the
@@ -184,9 +196,9 @@ Stop without enabling the workflow if any of these are unresolved:
 
 ```bash
 docker compose stop
-docker compose build --pull actions-runner
-docker compose up -d actions-runner
-docker compose logs --tail=100 actions-runner
+docker compose build --pull runner-manager
+docker compose up -d runner-manager
+docker compose logs --tail=100 runner-manager
 ```
 
 Confirm `Listening for Jobs` before rerunning a queued or failed workflow. The
@@ -198,22 +210,22 @@ the runner registration, work volume, and dedicated daemon state.
 
 ## Troubleshoot runner work-volume permissions
 
-If a job fails before checkout with `Access to the path '/runner/_work/_tool' is
-denied`, inspect the work volume from the runner container:
+If a job fails before checkout with an access error under `/runner-work`,
+inspect the work volume from the runner container:
 
 ```bash
-docker compose exec actions-runner \
-  stat -c '%u:%g %a %n' /runner/_work /runner/_work/_tool
-docker compose exec actions-runner test -w /runner/_work
+docker compose exec runner-manager \
+  stat -c '%u:%g %a %n' /runner-work /runner-work/_tool
+docker compose exec runner-manager test -w /runner-work
 ```
 
 Repair the existing named volume without deleting it, then recreate the runner:
 
 ```bash
 docker compose run --rm workspace-init
-docker compose up -d --force-recreate actions-runner
-docker compose exec actions-runner \
-  sh -lc 'test -w /runner/_work && mkdir -p /runner/_work/_tool'
+docker compose up -d --force-recreate runner-manager
+docker compose exec runner-manager \
+  sh -lc 'test -w /runner-work && mkdir -p /runner-work/_tool'
 ```
 
 Expected ownership is `1000:1000`. Do not replace this procedure with broad host
