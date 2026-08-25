@@ -21,7 +21,72 @@ The local runner must emit `.codex-result/codex.patch`, `base-sha.txt`,
 dangerous paths, binary data, symlinks, oversized changes, or likely secrets are
 rejected before any branch is created.
 
-The workflow never merges a PR or marks it ready for review.
+The workflow never merges a PR or marks it ready for review. One local manager
+container can run a separately registered runner for every repository listed in
+`repositories.json`; all of them share one Codex concurrency limit.
+
+## Multi-repository setup
+
+Prerequisites are `gh`, Docker Compose, `jq`, admin and direct-push access to the
+target default branches, an installed existing GitHub App named
+`workflow-codex`, and a dedicated authenticated Codex home. The setup does not
+create an App. In the App installation browser page, select only the intended
+`cre-chan` repositories before continuing.
+
+Edit `repositories.json` through the management commands. Its default shared
+concurrency is one:
+
+```bash
+export CODEX_APP_ID='<numeric app id>'
+export CODEX_APP_PRIVATE_KEY_FILE='/absolute/path/to/additional-key.pem'
+./manage-repositories.sh add cre-chan/example
+./manage-repositories.sh deploy cre-chan/example
+./manage-repositories.sh concurrency 1
+```
+
+`add` verifies authentication, admin access, and the existing App installation,
+then sets the Actions variable and streams the key file to `gh secret set` over
+standard input. It never copies, prints, or deletes the key. `deploy` clones the
+default branch into a temporary directory, copies only the workflow payload,
+validates shell files, and creates a direct commit only when content changed.
+Consequently both commands are safe to rerun after a partial failure. Running
+`./manage-repositories.sh sync` obtains short-lived runner tokens through `gh`,
+pipes them into throwaway containers, registers missing runners, unregisters
+stale ones, and recreates the manager. Repeating it does no registration work
+when state already matches.
+
+Register each newly added runner with a short-lived token, passed only through a
+pipe. The manager stores one registration under the shared named volume:
+
+```bash
+gh api --method POST repos/cre-chan/example/actions/runners/registration-token \
+  --jq .token | docker compose run --rm --no-deps -T runner-manager \
+  register cre-chan/example
+docker compose up -d runner-manager
+./manage-repositories.sh status
+```
+
+Before removing an entry, stop the manager and unregister it on GitHub, then
+remove it from the local configuration:
+
+```bash
+docker compose stop runner-manager
+gh api --method POST repos/cre-chan/example/actions/runners/remove-token \
+  --jq .token | docker compose run --rm --no-deps -T runner-manager \
+  remove cre-chan/example
+./manage-repositories.sh remove cre-chan/example
+docker compose up -d runner-manager
+```
+
+For updates, run `update`, `deploy`, then recreate `runner-manager`. To recover
+from interruption, run the same operation again and inspect `status` and
+`docker compose logs runner-manager`. A repository shown as `unregistered`
+needs the registration command above. Never delete volumes during recovery.
+
+To migrate the old single-repository installation, stop `actions-runner`, add
+`cre-chan/workflow`, register it once in the new manager volume, verify it is
+online, and only then remove the obsolete runner registration. The workflow and
+artifact formats do not change.
 
 ## Safety criteria for generated changes
 
@@ -79,7 +144,7 @@ runner executes Codex in an isolated worker container.
 
 ### Local runner
 
-- `compose.yaml` defines the local Actions runner, its Docker daemon, persistent
+- `compose.yaml` defines the multi-repository runner manager, its Docker daemon, persistent
   volumes, and workspace initialization service.
 - `.env.example` documents the local `CODEX_AUTH_DIR` setting used by Compose.
 - `github-runner/Dockerfile` builds the self-hosted GitHub Actions runner image.
@@ -98,4 +163,6 @@ bash -n .github/scripts/validate-and-apply-patch.sh tests/validate-patch-test.sh
   tests/readme-safety-criteria-test.sh
 bash tests/validate-patch-test.sh
 bash tests/readme-safety-criteria-test.sh
+bash tests/multi-repository-test.sh
+docker compose config --quiet
 ```

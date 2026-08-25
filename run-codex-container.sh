@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+runner_root=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+if [[ ${CODEX_CONCURRENCY_LOCKED:-0} != 1 ]]; then
+  export CODEX_CONCURRENCY_LOCKED=1
+  exec "$runner_root/shared-concurrency.sh" "$0" "$@"
+fi
+
 request_file=${1:?request JSON is required}
 automation_home=${CODEX_AUTOMATION_HOME:?Set CODEX_AUTOMATION_HOME in the self-hosted runner service environment}
-runner_root=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repository_root=$(git rev-parse --show-toplevel)
 image=moth-watcher-codex-runner:0.149.0
 worker_id="${GITHUB_RUN_ID:-manual}-${GITHUB_RUN_ATTEMPT:-1}-$$"

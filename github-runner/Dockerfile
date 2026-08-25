@@ -7,23 +7,26 @@ ARG ACTIONS_RUNNER_SHA256=58b758e420b87093fbd4bfddd368074960053e2f1388f01848c826
 
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      ca-certificates curl git jq libicu74 \
+      ca-certificates curl git jq libicu74 util-linux \
     && rm -rf /var/lib/apt/lists/* \
     && usermod --login runner --home /home/runner --move-home ubuntu \
     && groupmod --new-name runner ubuntu \
     && mkdir -p /opt/actions-runner-dist /opt/moth-watcher-runner /runner \
+      /runner-state /runner-work /codex-locks \
     && curl --fail --location --silent --show-error \
       "https://github.com/actions/runner/releases/download/v${ACTIONS_RUNNER_VERSION}/actions-runner-linux-arm64-${ACTIONS_RUNNER_VERSION}.tar.gz" \
       --output /tmp/actions-runner.tar.gz \
     && echo "${ACTIONS_RUNNER_SHA256}  /tmp/actions-runner.tar.gz" | sha256sum --check --strict \
     && tar -xzf /tmp/actions-runner.tar.gz -C /opt/actions-runner-dist \
     && rm /tmp/actions-runner.tar.gz \
-    && chown -R runner:runner /opt/actions-runner-dist /runner
+    && chown -R runner:runner /opt/actions-runner-dist /runner \
+      /runner-state /runner-work /codex-locks
 
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/docker-buildx /usr/local/libexec/docker/cli-plugins/docker-buildx
-COPY --chown=runner:runner Dockerfile Dockerfile.dockerignore container-entrypoint.sh run-codex-container.sh /opt/moth-watcher-runner/
+COPY --chown=runner:runner Dockerfile Dockerfile.dockerignore container-entrypoint.sh run-codex-container.sh shared-concurrency.sh /opt/moth-watcher-runner/
 COPY --chmod=0555 github-runner/entrypoint.sh /usr/local/bin/github-runner-entrypoint
+COPY --chmod=0555 github-runner/manager.sh /usr/local/bin/runner-manager
 
 USER runner
 WORKDIR /runner
