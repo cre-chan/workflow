@@ -8,11 +8,11 @@ services:
       - /bin/sh
       - -euc
       - |
-        install -d -o 1000 -g 1000 -m 0755 /runner/_work
-        chown -R 1000:1000 /runner/_work
-        chmod 0755 /runner/_work
+        install -d -o 1000 -g 1000 -m 0755 /runner-work
+        chown -R 1000:1000 /runner-work
+        chmod 0755 /runner-work
     volumes:
-      - runner-work:/runner/_work
+      - runner-work:/runner-work
     restart: "no"
 
   docker-daemon:
@@ -37,7 +37,7 @@ services:
       retries: 30
     restart: unless-stopped
 
-  actions-runner:
+  runner-manager:
     build:
       context: .
       dockerfile: github-runner/Dockerfile
@@ -49,15 +49,22 @@ services:
     environment:
       DOCKER_HOST: tcp://docker-daemon:2375
       DOCKER_BUILDKIT: "1"
-      RUNNER_URL: https://github.com/cre-chan/workflow
-      RUNNER_NAME: workflow-codex-docker-1
       RUNNER_LABELS: moth-watcher-codex
       RUNNER_MANUALLY_TRAP_SIG: "1"
       MOTH_WATCHER_RUNNER_HOME: /opt/moth-watcher-runner
       CODEX_AUTOMATION_HOME: /codex-auth-host
+      RUNNER_CONFIG: /config/repositories.json
+      RUNNER_STATE_ROOT: /runner-state
+      CODEX_LOCK_DIR: /codex-locks
     volumes:
-      - runner-state:/runner
-      - runner-work:/runner/_work
+      - runner-state:/runner-state
+      - runner-work:/runner-work
+      - codex-locks:/codex-locks
+      - type: bind
+        source: ./repositories.json
+        target: /config/repositories.json
+        read_only: true
+    entrypoint: ["/usr/local/bin/runner-manager"]
     stop_grace_period: 1m
     restart: unless-stopped
 
@@ -65,3 +72,4 @@ volumes:
   docker-data:
   runner-state:
   runner-work:
+  codex-locks:
