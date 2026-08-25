@@ -48,7 +48,8 @@ export CODEX_APP_PRIVATE_KEY_FILE='/absolute/path/to/additional-key.pem'
 then sets the Actions variable and streams the key file to `gh secret set` over
 standard input. It never copies, prints, or deletes the key. `deploy` clones the
 default branch into a temporary directory, copies only the workflow payload,
-validates shell files, and creates a direct commit only when content changed.
+including `tests/validate-patch-test.sh`, validates shell files, and creates a
+direct commit only when content changed.
 Consequently both commands are safe to rerun after a partial failure. Running
 `./manage-repositories.sh sync` obtains short-lived runner tokens through `gh`,
 pipes them into throwaway containers, registers missing runners, unregisters

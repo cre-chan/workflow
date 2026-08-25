@@ -15,6 +15,14 @@ grep -q '/runner-state /runner-work /codex-locks' "$root/github-runner/Dockerfil
   fail "runner-owned volume mount points are not initialized"
 ok "manager volume paths are aligned and writable"
 
+grep -A5 -q 'for source_file in.*\\' "$root/manage-repositories.sh" || \
+  fail "deployment payload list is missing"
+grep -q '^[[:space:]]*tests/validate-patch-test\.sh; do$' "$root/manage-repositories.sh" || \
+  fail "repository verification script is not deployed"
+[[ $(grep -c '^[[:space:]]*tests/validate-patch-test\.sh' "$root/manage-repositories.sh") -eq 2 ]] || \
+  fail "repository verification script is not both copied and committed"
+ok "deployment includes the required repository verification script"
+
 mkdir -p "$tmp/dist/bin" "$tmp/state" "$tmp/work" "$tmp/locks"
 touch "$tmp/dist/bin/Runner.Listener"
 chmod +x "$tmp/dist/bin/Runner.Listener"
