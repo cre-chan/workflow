@@ -3,8 +3,28 @@ set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 config=${REPOSITORIES_CONFIG:-$root/repositories.json}
+template=$root/templates/codex-automation.yml
 action=${1:-help}
 repo=${2:-}
+gh_aw_version=v0.86.2
+
+usage() {
+  cat <<'EOF'
+Usage:
+  ./manage-repositories.sh bootstrap-admin
+  ./manage-repositories.sh install cre-chan/REPOSITORY [true|false] [true|false]
+  ./manage-repositories.sh update cre-chan/REPOSITORY [true|false] [true|false]
+  ./manage-repositories.sh upgrade cre-chan/REPOSITORY
+  ./manage-repositories.sh upgrade-all
+  ./manage-repositories.sh disable cre-chan/REPOSITORY
+  ./manage-repositories.sh remove cre-chan/REPOSITORY
+  ./manage-repositories.sh status
+  ./manage-repositories.sh concurrency LIMIT
+  ./manage-repositories.sh compile [--check]
+
+install/update booleans enable Issue implementation and PR feedback respectively.
+EOF
+}
 
 require_repo() {
   [[ "$repo" =~ ^cre-chan/[A-Za-z0-9_.-]+$ ]] || {
@@ -12,150 +32,297 @@ require_repo() {
   }
 }
 
-github_admin_checks() {
-  gh auth status >/dev/null 2>&1 || { echo "GitHub CLI authentication is unavailable" >&2; exit 1; }
+load_admin_token() {
+  local token_file=${ADMIN_GITHUB_TOKEN_FILE:-/run/secrets/github_admin_token}
+  [[ -f "$token_file" && ! -L "$token_file" && -r "$token_file" ]] || {
+    echo "ADMIN_GITHUB_TOKEN_FILE must name a readable non-symlink token file" >&2; exit 2;
+  }
+  if command -v stat >/dev/null 2>&1; then
+    mode=$(stat -f '%Lp' "$token_file" 2>/dev/null || stat -c '%a' "$token_file")
+    [[ "$mode" == 600 || "$mode" == 400 ]] || { echo "Admin token file must have mode 0600 or 0400" >&2; exit 2; }
+  fi
+  GH_TOKEN=$(<"$token_file")
+  export GH_TOKEN
+  gh auth setup-git >/dev/null
+}
+
+github_checks() {
+  load_admin_token
   gh api "repos/$repo" --jq '.permissions.admin' | grep -qx true || {
     echo "$repo: admin permission is required" >&2; exit 1;
   }
 }
 
-github_app_checks() {
-  local app_id=${CODEX_APP_ID:-} key=${CODEX_APP_PRIVATE_KEY_FILE:-}
-  local now issued_at expires_at header payload unsigned signature jwt
-  github_admin_checks
-  [[ "$app_id" =~ ^[0-9]+$ ]] || { echo "CODEX_APP_ID must be set" >&2; exit 2; }
-  [[ -f "$key" && ! -L "$key" && -r "$key" ]] || { echo "Private key file is missing or unsafe" >&2; exit 2; }
-  now=$(date +%s)
-  issued_at=$((now - 60))
-  expires_at=$((now + 540))
-  header=$(printf '%s' '{"alg":"RS256","typ":"JWT"}' | openssl base64 -A | tr '+/' '-_' | tr -d '=')
-  payload=$(printf '{"iat":%s,"exp":%s,"iss":"%s"}' "$issued_at" "$expires_at" "$app_id" | \
-    openssl base64 -A | tr '+/' '-_' | tr -d '=')
-  unsigned="$header.$payload"
-  signature=$(printf '%s' "$unsigned" | openssl dgst -sha256 -sign "$key" | \
-    openssl base64 -A | tr '+/' '-_' | tr -d '=')
-  jwt="$unsigned.$signature"
-  printf '%s\n' \
-    'silent' \
-    'show-error' \
-    'fail' \
-    'header = "Accept: application/vnd.github+json"' \
-    'header = "X-GitHub-Api-Version: 2022-11-28"' \
-    "header = \"Authorization: Bearer $jwt\"" \
-    "url = \"https://api.github.com/repos/$repo/installation\"" | \
-    curl --config - | jq -e '.app_slug == "workflow-codex"' >/dev/null || {
-    echo "$repo: install workflow-codex in the browser before retrying" >&2; exit 1;
-  }
+write_config() {
+  local jq_filter=$1; shift
+  local tmp
+  tmp=$(mktemp "${config}.tmp.XXXXXX")
+  trap 'rm -f -- "$tmp"' EXIT
+  jq "$@" "$jq_filter" "$config" >"$tmp"
+  cp "$tmp" "$config"
+  rm -f -- "$tmp"
+  trap - EXIT
+}
+
+normalize_config() {
+  write_config '
+    .workflow_ref = (.workflow_ref // "") |
+    .repositories |= map(
+      if type == "string" then
+        {name: ., enabled: true, issue_implementation: true, pr_feedback: true, installed_ref: ""}
+      else . end)'
+}
+
+workflow_ref() {
+  local ref=${WORKFLOW_REF:-}
+  if [[ -z "$ref" && "$action" == upgrade ]]; then
+    load_admin_token
+    central_default=$(gh api repos/cre-chan/workflow --jq .default_branch)
+    ref=$(gh api "repos/cre-chan/workflow/commits/$central_default" --jq .sha)
+  fi
+  [[ -n "$ref" ]] || ref=$(jq -r '.workflow_ref // ""' "$config")
+  if [[ -z "$ref" ]]; then
+    ref=$(git -C "$root" rev-parse HEAD)
+    git -C "$root" cat-file -e "$ref:.github/workflows/reusable-codex-issue.lock.yml" 2>/dev/null &&
+      git -C "$root" cat-file -e "$ref:.github/workflows/reusable-codex-pr-feedback.lock.yml" 2>/dev/null || {
+      echo "Compile and commit the central workflows before installing a target" >&2; exit 2;
+    }
+  fi
+  [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || { echo "Workflow ref must be a full commit SHA" >&2; exit 2; }
+  printf '%s' "$ref"
 }
 
 configure_repository() {
-  local app_id=${CODEX_APP_ID:-} key=${CODEX_APP_PRIVATE_KEY_FILE:-}
-  [[ "$app_id" =~ ^[0-9]+$ ]] || { echo "CODEX_APP_ID must be set" >&2; exit 2; }
-  [[ -f "$key" && ! -L "$key" && -r "$key" ]] || { echo "Private key file is missing or unsafe" >&2; exit 2; }
-  github_app_checks
-  gh variable set CODEX_APP_ID --repo "$repo" --body "$app_id" >/dev/null
-  gh secret set CODEX_APP_PRIVATE_KEY --repo "$repo" <"$key" >/dev/null
+  github_checks
+  gh api --method PUT "repos/$repo/actions/permissions/workflow" \
+    -f default_workflow_permissions=read -F can_approve_pull_request_reviews=false >/dev/null
   gh label create agent-ready --repo "$repo" --color 0e8a16 --force >/dev/null
-  echo "$repo: GitHub settings configured"
+  gh label create codex-processing --repo "$repo" --color fbca04 --force >/dev/null
+  gh label create codex-pr-created --repo "$repo" --color 0e8a16 --force >/dev/null
 }
 
-deploy_repository() {
-  local checkout default_branch changed=0 source_file
-  github_admin_checks
+repo_setting() {
+  local field=$1 default=$2
+  jq -r --arg repo "$repo" --arg field "$field" --arg default "$default" '
+    first(.repositories[] | select(.name == $repo) | .[$field]) //
+      (try ($default | fromjson) catch $default)
+  ' "$config"
+}
+
+render_caller() {
+  local destination=$1 ref issue_enabled pr_enabled
+  ref=$(workflow_ref)
+  issue_enabled=$(repo_setting issue_implementation true)
+  pr_enabled=$(repo_setting pr_feedback true)
+  sed -e "s/__WORKFLOW_REF__/$ref/g" \
+      -e "s/__ISSUE_ENABLED__/$issue_enabled/g" \
+      -e "s/__PR_FEEDBACK_ENABLED__/$pr_enabled/g" \
+      "$template" >"$destination"
+}
+
+commit_caller() {
+  local mode=$1 checkout default_branch target changed=0
+  github_checks
   checkout=$(mktemp -d)
   trap 'rm -rf -- "$checkout"' RETURN
   default_branch=$(gh api "repos/$repo" --jq '.default_branch')
   gh repo clone "$repo" "$checkout" -- --depth=1 --branch "$default_branch" >/dev/null
-  for source_file in \
-    .github/workflows/codex-agent-ready.yml \
-    .github/scripts/validate-and-apply-patch.sh \
-    .github/ISSUE_TEMPLATE/agentic-story.yml \
-    tests/validate-patch-test.sh; do
-    mkdir -p "$checkout/$(dirname "$source_file")"
-    if [[ ! -f "$checkout/$source_file" ]] || ! cmp -s "$root/$source_file" "$checkout/$source_file"; then
-      cp "$root/$source_file" "$checkout/$source_file"
+  target=$checkout/.github/workflows/codex-automation.yml
+  mkdir -p "$(dirname "$target")"
+  if [[ "$mode" == remove ]]; then
+    [[ -f "$target" ]] || { echo "$repo: caller already absent"; return; }
+    rm -f "$target"
+    changed=1
+  else
+    candidate=$(mktemp)
+    render_caller "$candidate"
+    if [[ ! -f "$target" ]] || ! cmp -s "$candidate" "$target"; then
+      cp "$candidate" "$target"
       changed=1
     fi
-  done
-  if [[ $changed -eq 0 ]]; then
-    echo "$repo: deployment already current"
-    return
+    rm -f "$candidate"
   fi
-  while IFS= read -r -d '' source_file; do
-    bash -n "$source_file"
-  done < <(find "$checkout" -maxdepth 1 -type f -name '*.sh' -print0)
-  bash -n "$checkout/.github/scripts"/*.sh
-  bash -n "$checkout/tests/validate-patch-test.sh"
-  bash "$checkout/tests/validate-patch-test.sh" >/dev/null 2>&1 || {
-    echo "$repo: validation failed; no commit was made" >&2
-    exit 1
-  }
-  (cd "$checkout" && git add -- \
-    .github/workflows/codex-agent-ready.yml \
-    .github/scripts/validate-and-apply-patch.sh \
-    .github/ISSUE_TEMPLATE/agentic-story.yml \
-    tests/validate-patch-test.sh && \
+  [[ $changed -eq 1 ]] || { echo "$repo: caller already current"; return; }
+  (cd "$checkout" && git add --all -- .github/workflows/codex-automation.yml && \
     git config user.name 'workflow-codex setup' && \
     git config user.email 'workflow-codex-setup@users.noreply.github.com' && \
-    git commit -m 'Set up Codex issue workflow' >/dev/null && git push origin "HEAD:$default_branch" >/dev/null)
-  echo "$repo: deployment committed to $default_branch"
+    git commit -m "$([[ "$mode" == remove ]] && echo 'Remove Codex automation' || echo 'Configure Codex automation')" >/dev/null && \
+    git push origin "HEAD:$default_branch" >/dev/null)
+  echo "$repo: caller committed to $default_branch"
 }
 
-case "$action" in
-  add)
-    require_repo
-    configure_repository
-    if jq -e --arg repo "$repo" '.repositories | index($repo)' "$config" >/dev/null; then
-      echo "$repo: already configured"
-    else
-      tmp=$(mktemp "${config}.tmp.XXXXXX"); trap 'rm -f -- "$tmp"' EXIT
-      jq --arg repo "$repo" '.repositories += [$repo] | .repositories |= sort' "$config" >"$tmp"
-      mv "$tmp" "$config"; trap - EXIT
-      echo "$repo: added; run sync to register its runner"
+manager_command() {
+  if [[ ${MOTH_ADMIN_CONTEXT:-0} == 1 ]]; then
+    RUNNER_CONFIG=$config /usr/local/bin/runner-manager "$@"
+  else
+    docker compose run --rm --no-deps -T runner-manager "$@"
+  fi
+}
+
+register_repo() {
+  local state
+  state=$(manager_command status-all | awk -F '\t' -v repo="$repo" '$1 == repo {print $2; exit}')
+  [[ "$state" != unregistered && -n "$state" ]] || {
+    gh api --method POST "repos/$repo/actions/runners/registration-token" --jq .token | manager_command register "$repo"
+  }
+  wait_runner_online
+}
+
+runner_name() { printf 'workflow-codex-%s' "$(printf '%s' "$repo" | tr '/.' '--_')"; }
+
+github_runner_state() {
+  gh api "repos/$repo/actions/runners?per_page=100" \
+    --jq ".runners[] | select(.name == \"$(runner_name)\") | (.status + if .busy then \":busy\" else \"\" end)" |
+    head -n 1
+}
+
+wait_runner_online() {
+  local attempt state
+  for attempt in {1..30}; do
+    state=$(github_runner_state)
+    [[ "$state" == online* ]] && { echo "$repo: runner online"; return; }
+    sleep 2
+  done
+  echo "$repo: runner did not become online within 60 seconds" >&2
+  exit 1
+}
+
+unregister_repo() {
+  local state
+  state=$(manager_command status-all | awk -F '\t' -v repo="$repo" '$1 == repo {print $2; exit}')
+  [[ "$state" == unregistered || -z "$state" ]] || {
+    gh api --method POST "repos/$repo/actions/runners/remove-token" --jq .token | manager_command remove "$repo"
+  }
+}
+
+set_repo_entry() {
+  local enabled=$1 issue_enabled=$2 pr_enabled=$3 ref
+  ref=$(workflow_ref)
+  write_config '
+    .workflow_ref = $ref |
+    .repositories = ([.repositories[] | select(.name != $repo)] + [{
+      name: $repo, enabled: $enabled,
+      issue_implementation: $issue, pr_feedback: $pr,
+      installed_ref: $ref
+    }]) | .repositories |= sort_by(.name)
+  ' --arg repo "$repo" --arg ref "$ref" --argjson enabled "$enabled" --argjson issue "$issue_enabled" --argjson pr "$pr_enabled"
+}
+
+compile_workflows() {
+  local check=${1:-} bin=${GH_AW_BIN:-}
+  [[ -n "$bin" ]] || bin=$(command -v gh-aw 2>/dev/null || true)
+  [[ -x "$bin" ]] || { echo "Set GH_AW_BIN to the gh-aw $gh_aw_version executable" >&2; exit 2; }
+  platform=$(printf '%s-%s' "$(uname -s | tr '[:upper:]' '[:lower:]')" "$(uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')")
+  expected=$(awk -v file="$platform" '$2 == file {print $1}' "$root/scripts/gh-aw-v0.86.2-checksums.txt")
+  [[ -n "$expected" ]] || { echo "Unsupported gh-aw platform: $platform" >&2; exit 2; }
+  actual=$(shasum -a 256 "$bin" | awk '{print $1}')
+  [[ "$actual" == "$expected" ]] || { echo "gh-aw checksum mismatch for $platform" >&2; exit 2; }
+  version=$($bin --version 2>&1 || $bin version 2>&1)
+  grep -q "$gh_aw_version" <<<"$version" || { echo "gh-aw $gh_aw_version is required" >&2; exit 2; }
+  if [[ "$check" == --check ]]; then
+    before=$(shasum .github/workflows/reusable-codex-*.lock.yml)
+    $bin compile reusable-codex-issue reusable-codex-pr-feedback --no-check-update --action-tag "$gh_aw_version" --approve >/dev/null
+    normalize_compiled_workflows
+    after=$(shasum .github/workflows/reusable-codex-*.lock.yml)
+    [[ "$before" == "$after" ]] || { echo "Compiled workflows are stale" >&2; exit 1; }
+  else
+    $bin compile reusable-codex-issue reusable-codex-pr-feedback --no-check-update --action-tag "$gh_aw_version" --approve
+    normalize_compiled_workflows
+  fi
+}
+
+normalize_compiled_workflows() {
+  local lock tmp
+  for lock in .github/workflows/reusable-codex-*.lock.yml; do
+    tmp=$(mktemp "${lock}.tmp.XXXXXX")
+    sed \
+      -e 's#/tmp/gh-aw#${{ runner.temp }}/gh-aw-global#g' \
+      -e 's#--name awmg-mcpg#--name awmg-mcpg-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}#g' \
+      -e 's#export MCP_GATEWAY_PORT="8080"#export MCP_GATEWAY_PORT="$((20000 + GITHUB_RUN_ID % 20000))"#g' \
+      "$lock" >"$tmp"
+    cp "$tmp" "$lock"
+    rm -f -- "$tmp"
+  done
+}
+
+status_report() {
+  local configured name enabled installed expected remote_sha permissions runner_state online_state
+  configured=$(manager_command status-all)
+  printf 'repository\tenabled\tcaller\tactions\tlocal-runner\tgithub-runner\n'
+  while IFS= read -r name; do
+    repo=$name
+    enabled=$(repo_setting enabled true)
+    installed=$(repo_setting installed_ref '')
+    expected=$(workflow_ref)
+    remote_sha=$(gh api "repos/$repo/contents/.github/workflows/codex-automation.yml" \
+      -H 'Accept: application/vnd.github.raw+json' 2>/dev/null |
+      sed -n 's/.*reusable-codex-issue\.lock\.yml@\([0-9a-f]\{40\}\).*/\1/p' | head -n 1 || true)
+    if [[ -z "$remote_sha" ]]; then caller=missing
+    elif [[ "$remote_sha" == "$expected" && "$installed" == "$expected" ]]; then caller=current
+    else caller="stale:$remote_sha"
     fi
+    permissions=$(gh api "repos/$repo/actions/permissions/workflow" --jq '.default_workflow_permissions' 2>/dev/null || echo unknown)
+    runner_state=$(awk -F '\t' -v target="$repo" '$1 == target {print $2; exit}' <<<"$configured")
+    online_state=$(github_runner_state)
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$repo" "$enabled" "$caller" "$permissions" \
+      "${runner_state:-unregistered}" "${online_state:-missing}"
+  done < <(jq -r '.repositories[].name' "$config")
+}
+
+if [[ "$action" =~ ^(help|-h|--help)$ ]]; then usage; exit 0; fi
+normalize_config
+case "$action" in
+  bootstrap-admin)
+    load_admin_token
+    gh api --method POST repos/cre-chan/workflow/actions/runners/registration-token --jq .token |
+      docker compose run --rm --no-deps -T repository-admin register
     ;;
-  update) require_repo; configure_repository ;;
-  deploy) require_repo; deploy_repository ;;
-  remove)
+  install)
     require_repo
-    tmp=$(mktemp "${config}.tmp.XXXXXX"); trap 'rm -f -- "$tmp"' EXIT
-    jq --arg repo "$repo" '.repositories -= [$repo]' "$config" >"$tmp"
-    mv "$tmp" "$config"; trap - EXIT
-    echo "$repo: removed from configuration; run sync to unregister stale runners"
+    issue_enabled=${3:-true}; pr_enabled=${4:-true}
+    [[ "$issue_enabled" =~ ^(true|false)$ && "$pr_enabled" =~ ^(true|false)$ ]] || { echo "Feature flags must be true or false" >&2; exit 2; }
+    configure_repository
+    set_repo_entry true "$issue_enabled" "$pr_enabled"
+    commit_caller install
+    register_repo
     ;;
-  concurrency)
-    value=${2:-}
-    [[ "$value" =~ ^[1-9][0-9]*$ ]] || { echo "Concurrency must be a positive integer" >&2; exit 2; }
-    tmp=$(mktemp "${config}.tmp.XXXXXX"); trap 'rm -f -- "$tmp"' EXIT
-    jq --argjson value "$value" '.concurrency = $value' "$config" >"$tmp"
-    mv "$tmp" "$config"; trap - EXIT
-    echo "Shared Codex concurrency set to $value"
+  update)
+    require_repo; configure_repository
+    issue_enabled=${3:-$(repo_setting issue_implementation true)}
+    pr_enabled=${4:-$(repo_setting pr_feedback true)}
+    [[ "$issue_enabled" =~ ^(true|false)$ && "$pr_enabled" =~ ^(true|false)$ ]] || { echo "Feature flags must be true or false" >&2; exit 2; }
+    set_repo_entry true "$issue_enabled" "$pr_enabled"
+    commit_caller install; register_repo
+    ;;
+  upgrade)
+    require_repo; configure_repository
+    issue_enabled=$(repo_setting issue_implementation true)
+    pr_enabled=$(repo_setting pr_feedback true)
+    set_repo_entry true "$issue_enabled" "$pr_enabled"
+    commit_caller install; register_repo
+    ;;
+  upgrade-all)
+    while IFS= read -r repo; do "$0" upgrade "$repo"; done < <(jq -r '.repositories[].name' "$config")
+    ;;
+  disable)
+    require_repo
+    write_config '.repositories |= map(if .name == $repo then .enabled = false else . end)' --arg repo "$repo"
+    echo "$repo: disabled; runner-manager will stop it"
+    ;;
+  remove)
+    require_repo; github_checks; unregister_repo; commit_caller remove
+    write_config '.repositories |= map(select(.name != $repo))' --arg repo "$repo"
+    echo "$repo: removed"
     ;;
   status)
-    if docker compose ps --status running --services | grep -qx runner-manager; then
-      docker compose exec -T runner-manager runner-manager status
-    else
-      docker compose run --rm --no-deps runner-manager status
-    fi
+    load_admin_token
+    status_report
     ;;
-  sync)
-    while IFS=$'\t' read -r sync_repo sync_state; do
-      repo=$sync_repo
-      case "$sync_state" in
-        unregistered)
-          github_admin_checks
-          gh api --method POST "repos/$repo/actions/runners/registration-token" --jq .token | \
-            docker compose run --rm --no-deps -T runner-manager register "$repo"
-          ;;
-        stale)
-          github_admin_checks
-          gh api --method POST "repos/$repo/actions/runners/remove-token" --jq .token | \
-            docker compose run --rm --no-deps -T runner-manager remove "$repo"
-          ;;
-      esac
-    done < <(docker compose run --rm --no-deps runner-manager status-all)
-    docker compose up -d --force-recreate runner-manager
-    docker compose exec -T runner-manager runner-manager status
+  concurrency)
+    value=${2:-}; [[ "$value" =~ ^[1-9][0-9]*$ ]] || { echo "Concurrency must be a positive integer" >&2; exit 2; }
+    write_config '.concurrency = $value' --argjson value "$value"
+    echo "Shared Codex concurrency set to $value"
     ;;
-  *) echo "Usage: $0 {add|update|deploy|remove|status|sync|concurrency} [cre-chan/repository|limit]" ;;
+  compile) compile_workflows "${2:-}" ;;
+  *) usage >&2; exit 2 ;;
 esac

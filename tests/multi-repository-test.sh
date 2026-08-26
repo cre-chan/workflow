@@ -11,17 +11,9 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 ok() { pass=$((pass + 1)); echo "ok $pass - $*"; }
 
 grep -q 'runner-work:/runner-work' "$root/compose.yaml" || fail "runner work volume paths differ"
-grep -q '/runner-state /runner-work /codex-locks' "$root/github-runner/Dockerfile" || \
-  fail "runner-owned volume mount points are not initialized"
+grep -q 'chown -R 1000:1000 /runner-state /codex-locks' "$root/compose.yaml" || \
+  fail "runner-owned named volumes are not initialized"
 ok "manager volume paths are aligned and writable"
-
-grep -A5 -q 'for source_file in.*\\' "$root/manage-repositories.sh" || \
-  fail "deployment payload list is missing"
-grep -q '^[[:space:]]*tests/validate-patch-test\.sh; do$' "$root/manage-repositories.sh" || \
-  fail "repository verification script is not deployed"
-[[ $(grep -c '^[[:space:]]*tests/validate-patch-test\.sh' "$root/manage-repositories.sh") -eq 2 ]] || \
-  fail "repository verification script is not both copied and committed"
-ok "deployment includes the required repository verification script"
 
 mkdir -p "$tmp/dist/bin" "$tmp/state" "$tmp/work" "$tmp/locks"
 touch "$tmp/dist/bin/Runner.Listener"
@@ -38,7 +30,7 @@ while :; do sleep 1; done
 EOF
 chmod +x "$tmp/dist/config.sh" "$tmp/dist/run.sh"
 cat >"$tmp/config.json" <<'EOF'
-{"concurrency":1,"repositories":["cre-chan/one","cre-chan/two"]}
+{"concurrency":1,"workflow_ref":"0123456789012345678901234567890123456789","repositories":[{"name":"cre-chan/one","enabled":true,"issue_implementation":true,"pr_feedback":true,"installed_ref":"0123456789012345678901234567890123456789"},{"name":"cre-chan/two","enabled":false,"issue_implementation":true,"pr_feedback":false,"installed_ref":"0123456789012345678901234567890123456789"}]}
 EOF
 
 env RUNNER_CONFIG="$tmp/config.json" RUNNER_STATE_ROOT="$tmp/state" \
@@ -50,12 +42,20 @@ if sed 's/cre-chan\/two/other\/two/' "$tmp/config.json" >"$tmp/bad.json" && \
 fi
 ok "configuration validates owner, uniqueness, and concurrency"
 
+cat >"$tmp/legacy.json" <<'EOF'
+{"concurrency":1,"repositories":["cre-chan/one"]}
+EOF
+env RUNNER_CONFIG="$tmp/legacy.json" RUNNER_STATE_ROOT="$tmp/state" \
+  RUNNER_DISTRIBUTION="$tmp/dist" "$root/github-runner/manager.sh" validate
+ok "legacy string entries remain readable"
+
 manager=(env RUNNER_CONFIG="$tmp/config.json" RUNNER_STATE_ROOT="$tmp/state" RUNNER_DISTRIBUTION="$tmp/dist" "$root/github-runner/manager.sh")
 printf '%s\n' disposable-token | "${manager[@]}" register cre-chan/one >/dev/null
 printf '%s\n' disposable-token | "${manager[@]}" register cre-chan/one | grep -q 'already registered'
 [[ $(find "$tmp/state" -name .runner | wc -l) -eq 1 ]] || fail "registration was duplicated"
 manager_status=$("${manager[@]}" status-all)
 grep -q $'cre-chan/one\tregistered' <<<"$manager_status"
+grep -q $'cre-chan/two\tunregistered' <<<"$manager_status"
 printf '%s\n' disposable-token | "${manager[@]}" remove cre-chan/one >/dev/null
 [[ ! -e "$tmp/state/cre-chan-one" ]] || fail "runner state remains after removal"
 ok "runner registration and removal are idempotent"

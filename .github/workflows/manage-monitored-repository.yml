@@ -1,0 +1,66 @@
+name: Manage monitored repository
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Management operation
+        required: true
+        type: choice
+        options: [install, update, upgrade, disable, remove]
+      repository:
+        description: Repository in cre-chan/name form
+        required: true
+        type: string
+      issue_implementation:
+        description: Enable Issue implementation
+        required: true
+        default: true
+        type: boolean
+      pr_feedback:
+        description: Enable PR feedback
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  manage:
+    if: >-
+      github.actor == 'cre-chan' &&
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: [self-hosted, moth-watcher-admin]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Apply repository management operation
+        env:
+          ADMIN_GITHUB_TOKEN_FILE: /run/secrets/github_admin_token
+          MOTH_ADMIN_CONTEXT: "1"
+          REPOSITORIES_CONFIG: /config/repositories.json
+          WORKFLOW_REF: ${{ github.sha }}
+          OPERATION: ${{ inputs.operation }}
+          TARGET_REPOSITORY: ${{ inputs.repository }}
+          ISSUE_IMPLEMENTATION: ${{ inputs.issue_implementation }}
+          PR_FEEDBACK: ${{ inputs.pr_feedback }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$OPERATION" in
+            install)
+              ./manage-repositories.sh install "$TARGET_REPOSITORY" \
+                "$ISSUE_IMPLEMENTATION" "$PR_FEEDBACK"
+              ;;
+            update)
+              ./manage-repositories.sh update "$TARGET_REPOSITORY" \
+                "$ISSUE_IMPLEMENTATION" "$PR_FEEDBACK"
+              ;;
+            upgrade|disable|remove)
+              ./manage-repositories.sh "$OPERATION" "$TARGET_REPOSITORY"
+              ;;
+            *) echo "Unsupported operation" >&2; exit 2 ;;
+          esac
