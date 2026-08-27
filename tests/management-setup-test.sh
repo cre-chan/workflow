@@ -29,7 +29,18 @@ cat >"$test_root/bin/docker" <<'EOF'
 echo "unexpected docker invocation: $*" >&2
 exit 9
 EOF
-chmod +x "$test_root/bin/gh" "$test_root/bin/docker"
+cat >"$test_root/bin/stat" <<'EOF'
+#!/usr/bin/env bash
+case ${1:-} in
+  -c) printf '%s\n' 600 ;;
+  -f)
+    echo 'GNU stat filesystem output that must not enter the mode value'
+    exit 1
+    ;;
+  *) echo "unexpected stat invocation: $*" >&2; exit 9 ;;
+esac
+EOF
+chmod +x "$test_root/bin/gh" "$test_root/bin/docker" "$test_root/bin/stat"
 
 printf '%s\n' test-token >"$test_root/admin-token"
 chmod 0600 "$test_root/admin-token"
@@ -45,7 +56,7 @@ EOF
 PATH="$test_root/bin:$PATH" "$test_root/manage-repositories.sh" status |
   grep -q $'repository\tenabled\tcaller\tactions\tlocal-runner\tgithub-runner'
 [[ ! -e "$test_root/dotenv-was-executed" ]] || fail ".env was evaluated as shell code"
-ok "host CLI reads only approved literal paths from .env"
+ok "host CLI reads approved dotenv paths and accepts GNU stat mode output"
 
 cat >"$test_root/.env" <<EOF
 ADMIN_GITHUB_TOKEN_FILE=\$(touch "$test_root/approved-value-was-executed")

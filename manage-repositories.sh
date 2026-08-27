@@ -78,7 +78,7 @@ load_admin_token() {
     echo "ADMIN_GITHUB_TOKEN_FILE must name a readable non-symlink token file" >&2; exit 2;
   }
   if command -v stat >/dev/null 2>&1; then
-    mode=$(stat -f '%Lp' "$token_file" 2>/dev/null || stat -c '%a' "$token_file")
+    mode=$(stat -c '%a' "$token_file" 2>/dev/null || stat -f '%Lp' "$token_file")
     [[ "$mode" == 600 || "$mode" == 400 ]] || { echo "Admin token file must have mode 0600 or 0400" >&2; exit 2; }
   fi
   GH_TOKEN=$(<"$token_file")
@@ -95,15 +95,16 @@ github_checks() {
 
 write_config() {
   local jq_filter=$1; shift
-  local tmp temp_root=${TMPDIR:-/tmp}
+  local temp_root=${TMPDIR:-/tmp}
   [[ -d "$temp_root" && -w "$temp_root" ]] || {
     echo "Temporary directory is not writable: $temp_root" >&2; exit 2;
   }
-  tmp=$(mktemp "${temp_root%/}/moth-watcher-config.XXXXXX")
-  trap 'rm -f -- "$tmp"' EXIT
-  jq "$@" "$jq_filter" "$config" >"$tmp"
-  cp "$tmp" "$config"
-  rm -f -- "$tmp"
+  write_config_tmp=$(mktemp "${temp_root%/}/moth-watcher-config.XXXXXX")
+  trap 'rm -f -- "${write_config_tmp:-}"' EXIT
+  jq "$@" "$jq_filter" "$config" >"$write_config_tmp"
+  cp "$write_config_tmp" "$config"
+  rm -f -- "$write_config_tmp"
+  write_config_tmp=
   trap - EXIT
 }
 
