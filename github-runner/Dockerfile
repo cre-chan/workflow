@@ -7,7 +7,7 @@ ARG ACTIONS_RUNNER_SHA256=58b758e420b87093fbd4bfddd368074960053e2f1388f01848c826
 
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      ca-certificates curl git jq libicu74 util-linux \
+      ca-certificates curl gh git jq libicu74 openssl util-linux \
     && rm -rf /var/lib/apt/lists/* \
     && usermod --login runner --home /home/runner --move-home ubuntu \
     && groupmod --new-name runner ubuntu \
@@ -24,7 +24,8 @@ RUN apt-get update \
 
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/docker-buildx /usr/local/libexec/docker/cli-plugins/docker-buildx
-COPY --chown=runner:runner Dockerfile Dockerfile.dockerignore container-entrypoint.sh run-codex-container.sh shared-concurrency.sh /opt/moth-watcher-runner/
+COPY --chown=runner:runner Dockerfile Dockerfile.dockerignore container-entrypoint.sh run-codex-container.sh shared-concurrency.sh gh-aw-codex-adapter.sh /opt/moth-watcher-runner/
+COPY --chown=runner:runner .github/scripts/validate-and-apply-patch.sh /opt/moth-watcher-runner/validate-and-apply-patch.sh
 COPY --chmod=0555 github-runner/entrypoint.sh /usr/local/bin/github-runner-entrypoint
 COPY --chmod=0555 github-runner/manager.sh /usr/local/bin/runner-manager
 

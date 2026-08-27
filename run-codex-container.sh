@@ -31,6 +31,21 @@ docker build --pull \
   --file "$runner_root/Dockerfile" \
   --tag "$image" "$runner_root"
 
+docker run --rm \
+  --user 1000:1000 \
+  --read-only \
+  --mount "type=bind,src=${automation_home},dst=/codex-auth,readonly" \
+  --entrypoint /bin/bash \
+  "$image" -euc '
+    test -f /codex-auth/auth.json
+    test ! -L /codex-auth/auth.json
+    mode=$(stat -c %a /codex-auth/auth.json)
+    test "$mode" = 600 || test "$mode" = 400
+  ' || {
+    echo "Dedicated Codex auth.json must be a regular non-symlink file with mode 0600 or 0400" >&2
+    exit 2
+  }
+
 docker volume create "$worker_volume" >/dev/null
 
 tar -C "$repository_root" -cf - . | docker run --rm --interactive \
@@ -52,7 +67,7 @@ docker run --rm \
   --tmpfs /tmp:rw,noexec,nosuid,size=1g \
   --tmpfs /home/codex:rw,noexec,nosuid,size=64m \
   --mount "type=volume,src=${worker_volume},dst=/workspace" \
-  --mount "type=bind,src=${automation_home},dst=/codex-auth" \
+  --mount "type=bind,src=${automation_home},dst=/codex-auth,readonly" \
   --env CODEX_HOME=/codex-auth \
   --env HOME=/tmp/home \
   "$image" "/workspace/${request_file#./}"

@@ -34,15 +34,19 @@ verify_work_directory() {
 case "$command" in
   register)
     : "${RUNNER_URL:?RUNNER_URL is required}"
-    : "${RUNNER_TOKEN:?RUNNER_TOKEN is required for one-time registration}"
     : "${RUNNER_NAME:?RUNNER_NAME is required}"
+    token=${RUNNER_TOKEN:-}
+    if [[ -z "$token" ]]; then
+      IFS= read -r token
+    fi
+    [[ -n "$token" ]] || { echo "Runner token is required on standard input" >&2; exit 2; }
     if [[ -f .runner ]]; then
-      echo "Runner is already registered" >&2
-      exit 1
+      echo "Runner is already registered"
+      exit 0
     fi
     ./config.sh --unattended --replace \
       --url "$RUNNER_URL" \
-      --token "$RUNNER_TOKEN" \
+      --token "$token" \
       --name "$RUNNER_NAME" \
       --labels "${RUNNER_LABELS:-moth-watcher-codex}" \
       --work _work

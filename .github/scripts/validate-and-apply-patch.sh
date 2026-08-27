@@ -22,9 +22,10 @@ artifact_base=$(tr -d '\r\n' <"$result_dir/base-sha.txt")
 [[ $(git rev-parse HEAD) == "$expected_base" ]] || { echo "Checkout does not match authorized base SHA" >&2; exit 1; }
 
 default_branch=$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.default_branch')
-current_base=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${default_branch}" --jq '.object.sha')
+remote_ref=${EXPECTED_REMOTE_REF:-heads/${default_branch}}
+current_base=$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/${remote_ref}" --jq '.object.sha')
 [[ "$current_base" == "$expected_base" ]] || {
-  echo "Default branch moved from ${expected_base} to ${current_base}; refusing stale patch" >&2
+  echo "Remote ref moved from ${expected_base} to ${current_base}; refusing stale patch" >&2
   exit 1
 }
 

@@ -1,3 +1,4 @@
 self-hosted-runner:
   labels:
     - moth-watcher-codex
+    - moth-watcher-admin
