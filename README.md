@@ -39,9 +39,11 @@ docker compose up -d repository-admin runner-manager
 ./manage-repositories.sh status
 ```
 
-The same installation into a monitored repository is available from **Actions →
-Manage monitored repository → Run workflow** in `cre-chan/workflow` after the
-administration runner is online.
+After the administration runner is online, **Actions → Manage monitored
+repository → Run workflow** in `cre-chan/workflow` can perform the same `install`
+operation: configure the target repository's Actions permissions and labels,
+commit `.github/workflows/codex-automation.yml` to its default branch, add it to
+the monitored-repository configuration, and register its self-hosted runner.
 
 ## Project structure
 
