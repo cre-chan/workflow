@@ -36,6 +36,10 @@ docker compose up -d repository-admin runner-manager
 docker compose ps
 ```
 
+The management CLI reads only the two documented absolute path variables from
+`.env` and never evaluates it as shell code. `workspace-init` must create the
+admin runner `_work` directory as UID/GID 1000.
+
 Manage targets through the common interface:
 
 ```bash
@@ -50,6 +54,8 @@ Manage targets through the common interface:
 ```
 
 `install` and `update` accept Issue-implementation and PR-feedback booleans.
+Target arguments accept `REPOSITORY` or `cre-chan/REPOSITORY`; the short form is
+normalized to the `cre-chan` owner before configuration changes.
 `upgrade` changes only the immutable central SHA in the target caller. Target
 repositories never run gh-aw compilation. `disable` preserves the caller and
 runner registration but stops scheduling its runner; `remove` unregisters it and

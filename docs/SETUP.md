@@ -75,6 +75,9 @@ ADMIN_GITHUB_TOKEN_FILE=/absolute/path/to/moth-watcher-admin-token
 ```
 
 `.env` contains paths, not secret values. Do not put tokens in it.
+The host management CLI reads only `CODEX_AUTH_DIR` and
+`ADMIN_GITHUB_TOKEN_FILE` as literal absolute paths; it does not evaluate `.env`
+as shell code. Existing environment variables take precedence.
 
 ## 5. Initialize persistent workspace volumes
 
@@ -83,8 +86,9 @@ docker compose run --rm workspace-init
 ```
 
 This prepares the repository work, target-runner state, shared lock, and
-admin-runner state volumes as UID/GID 1000. It is safe to repeat and does not
-remove registrations.
+admin-runner state volumes as UID/GID 1000, including the administration
+runner's `_work` directory. It is safe to repeat and does not remove
+registrations.
 
 ## 6. Register the administration runner
 
@@ -148,6 +152,10 @@ queued and performs no partial change.
 ./manage-repositories.sh concurrency 1
 ./manage-repositories.sh status
 ```
+
+Target commands accept either `example` or `cre-chan/example`; an omitted owner
+is normalized to `cre-chan`. Other owners and malformed names are rejected before
+the configuration or GitHub state is changed.
 
 - `install` keeps the default Actions token permission read-only, creates labels, commits the caller, records the
   target, registers its runner, and is safe to repeat.

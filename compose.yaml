@@ -11,7 +11,7 @@ services:
         install -d -o 1000 -g 1000 -m 0755 /runner-work
         chown -R 1000:1000 /runner-work
         chmod 0755 /runner-work
-        install -d -o 1000 -g 1000 -m 0755 /admin-runner
+        install -d -o 1000 -g 1000 -m 0755 /admin-runner /admin-runner/_work
         chown -R 1000:1000 /admin-runner
         chmod 0755 /admin-runner
         install -d -o 1000 -g 1000 -m 0755 /runner-state /codex-locks

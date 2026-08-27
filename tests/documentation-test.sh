@@ -20,6 +20,14 @@ for variable in CODEX_AUTH_DIR ADMIN_GITHUB_TOKEN_FILE; do
   rg -q "$variable" "$root/docs/SETUP.md" || fail "setup omits $variable"
 done
 
+rg -q '/admin-runner /admin-runner/_work' "$root/compose.yaml" || \
+  fail "workspace-init omits the admin runner work directory"
+rg -q 'Target commands accept either' "$root/docs/SETUP.md" && \
+  rg -q 'normalized to `cre-chan`' "$root/docs/SETUP.md" || \
+  fail "setup omits accepted repository input forms"
+rg -q 'does not evaluate.*\.env' "$root/docs/SETUP.md" || \
+  fail "setup omits literal dotenv handling"
+
 rg -q 'templates/codex-automation\.yml' "$root/README.md" || fail "README omits caller template"
 rg -q '\.github/workflows/codex-automation\.yml' "$root/docs/SETUP.md" || fail "setup omits target path"
 if rg -q 'secrets:[[:space:]]*inherit' "$root/templates/codex-automation.yml"; then
