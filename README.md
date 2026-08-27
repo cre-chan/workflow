@@ -33,13 +33,15 @@ docker compose run --rm workspace-init
 # 4. Start the administration runner, repository runners, and isolated daemon.
 docker compose up -d repository-admin runner-manager
 
-# 5. Install the one-file caller and verify the complete state.
+# 5. Install the one-file caller Workflow in the repository to be monitored,
+#    then verify the complete state.
 ./manage-repositories.sh install cre-chan/REPOSITORY true true
 ./manage-repositories.sh status
 ```
 
-The same install is available from **Actions → Manage monitored repository → Run
-workflow** in `cre-chan/workflow` after the administration runner is online.
+The same installation into a monitored repository is available from **Actions →
+Manage monitored repository → Run workflow** in `cre-chan/workflow` after the
+administration runner is online.
 
 ## Project structure
 
