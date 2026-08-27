@@ -9,7 +9,7 @@ on:
         type: choice
         options: [install, update, upgrade, disable, remove]
       repository:
-        description: Repository in cre-chan/name form
+        description: Repository name or cre-chan/name
         required: true
         type: string
       issue_implementation:

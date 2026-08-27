@@ -25,6 +25,7 @@ chmod 600 "$HOME/.codex-moth-watcher-runner/auth.json" /absolute/path/to/admin-t
 # 2. Configure local-only absolute paths.
 cp .env.example .env
 # Edit CODEX_AUTH_DIR and ADMIN_GITHUB_TOKEN_FILE in .env.
+# The management CLI reads these two path variables without evaluating .env as shell code.
 
 # 3. Initialize volumes and register the dedicated administration runner.
 docker compose run --rm workspace-init
@@ -43,7 +44,8 @@ After the administration runner is online, **Actions → Manage monitored
 repository → Run workflow** in `cre-chan/workflow` can perform the same `install`
 operation: configure the target repository's Actions permissions and labels,
 commit `.github/workflows/codex-automation.yml` to its default branch, add it to
-the monitored-repository configuration, and register its self-hosted runner.
+the monitored-repository configuration, and register its self-hosted runner. The
+repository input accepts either `REPOSITORY` or `cre-chan/REPOSITORY`.
 
 ## Project structure
 

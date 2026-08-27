@@ -12,24 +12,64 @@ usage() {
   cat <<'EOF'
 Usage:
   ./manage-repositories.sh bootstrap-admin
-  ./manage-repositories.sh install cre-chan/REPOSITORY [true|false] [true|false]
-  ./manage-repositories.sh update cre-chan/REPOSITORY [true|false] [true|false]
-  ./manage-repositories.sh upgrade cre-chan/REPOSITORY
+  ./manage-repositories.sh install [cre-chan/]REPOSITORY [true|false] [true|false]
+  ./manage-repositories.sh update [cre-chan/]REPOSITORY [true|false] [true|false]
+  ./manage-repositories.sh upgrade [cre-chan/]REPOSITORY
   ./manage-repositories.sh upgrade-all
-  ./manage-repositories.sh disable cre-chan/REPOSITORY
-  ./manage-repositories.sh remove cre-chan/REPOSITORY
+  ./manage-repositories.sh disable [cre-chan/]REPOSITORY
+  ./manage-repositories.sh remove [cre-chan/]REPOSITORY
   ./manage-repositories.sh status
   ./manage-repositories.sh concurrency LIMIT
   ./manage-repositories.sh compile [--check]
 
+Repository names without an owner are normalized to cre-chan/REPOSITORY.
 install/update booleans enable Issue implementation and PR feedback respectively.
 EOF
 }
 
-require_repo() {
+normalize_repo() {
+  if [[ "$repo" =~ ^[A-Za-z0-9_.-]+$ ]]; then
+    repo="cre-chan/$repo"
+  fi
   [[ "$repo" =~ ^cre-chan/[A-Za-z0-9_.-]+$ ]] || {
-    echo "Repository must use cre-chan/REPOSITORY form" >&2; exit 2;
+    echo "Repository must use REPOSITORY or cre-chan/REPOSITORY form" >&2; exit 2;
   }
+}
+
+set_dotenv_path() {
+  local key=$1 value=$2
+  case "$value" in
+    \"*\") [[ "$value" == *\" ]] && value=${value:1:${#value}-2} ;;
+    \'*\') [[ "$value" == *\' ]] && value=${value:1:${#value}-2} ;;
+  esac
+  [[ "$value" == /* ]] || {
+    echo "$key in .env must be an absolute path" >&2; exit 2;
+  }
+  case "$key" in
+    CODEX_AUTH_DIR)
+      [[ -n ${CODEX_AUTH_DIR+x} ]] || CODEX_AUTH_DIR=$value
+      export CODEX_AUTH_DIR
+      ;;
+    ADMIN_GITHUB_TOKEN_FILE)
+      [[ -n ${ADMIN_GITHUB_TOKEN_FILE+x} ]] || ADMIN_GITHUB_TOKEN_FILE=$value
+      export ADMIN_GITHUB_TOKEN_FILE
+      ;;
+  esac
+}
+
+load_local_env() {
+  local env_file=$root/.env line key value
+  [[ ${MOTH_ADMIN_CONTEXT:-0} != 1 && -f "$env_file" && ! -L "$env_file" ]] || return 0
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line=${line%$'\r'}
+    case "$line" in
+      CODEX_AUTH_DIR=*|ADMIN_GITHUB_TOKEN_FILE=*)
+        key=${line%%=*}
+        value=${line#*=}
+        set_dotenv_path "$key" "$value"
+        ;;
+    esac
+  done <"$env_file"
 }
 
 load_admin_token() {
@@ -55,8 +95,11 @@ github_checks() {
 
 write_config() {
   local jq_filter=$1; shift
-  local tmp
-  tmp=$(mktemp "${config}.tmp.XXXXXX")
+  local tmp temp_root=${TMPDIR:-/tmp}
+  [[ -d "$temp_root" && -w "$temp_root" ]] || {
+    echo "Temporary directory is not writable: $temp_root" >&2; exit 2;
+  }
+  tmp=$(mktemp "${temp_root%/}/moth-watcher-config.XXXXXX")
   trap 'rm -f -- "$tmp"' EXIT
   jq "$@" "$jq_filter" "$config" >"$tmp"
   cp "$tmp" "$config"
@@ -270,6 +313,10 @@ status_report() {
 }
 
 if [[ "$action" =~ ^(help|-h|--help)$ ]]; then usage; exit 0; fi
+load_local_env
+case "$action" in
+  install|update|upgrade|disable|remove) normalize_repo ;;
+esac
 normalize_config
 case "$action" in
   bootstrap-admin)
@@ -278,7 +325,6 @@ case "$action" in
       docker compose run --rm --no-deps -T repository-admin register
     ;;
   install)
-    require_repo
     issue_enabled=${3:-true}; pr_enabled=${4:-true}
     [[ "$issue_enabled" =~ ^(true|false)$ && "$pr_enabled" =~ ^(true|false)$ ]] || { echo "Feature flags must be true or false" >&2; exit 2; }
     configure_repository
@@ -287,7 +333,7 @@ case "$action" in
     register_repo
     ;;
   update)
-    require_repo; configure_repository
+    configure_repository
     issue_enabled=${3:-$(repo_setting issue_implementation true)}
     pr_enabled=${4:-$(repo_setting pr_feedback true)}
     [[ "$issue_enabled" =~ ^(true|false)$ && "$pr_enabled" =~ ^(true|false)$ ]] || { echo "Feature flags must be true or false" >&2; exit 2; }
@@ -295,7 +341,7 @@ case "$action" in
     commit_caller install; register_repo
     ;;
   upgrade)
-    require_repo; configure_repository
+    configure_repository
     issue_enabled=$(repo_setting issue_implementation true)
     pr_enabled=$(repo_setting pr_feedback true)
     set_repo_entry true "$issue_enabled" "$pr_enabled"
@@ -305,12 +351,11 @@ case "$action" in
     while IFS= read -r repo; do "$0" upgrade "$repo"; done < <(jq -r '.repositories[].name' "$config")
     ;;
   disable)
-    require_repo
     write_config '.repositories |= map(if .name == $repo then .enabled = false else . end)' --arg repo "$repo"
     echo "$repo: disabled; runner-manager will stop it"
     ;;
   remove)
-    require_repo; github_checks; unregister_repo; commit_caller remove
+    github_checks; unregister_repo; commit_caller remove
     write_config '.repositories |= map(select(.name != $repo))' --arg repo "$repo"
     echo "$repo: removed"
     ;;
